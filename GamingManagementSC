@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity ^0.8.6;
+
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
+import "hardhat/console.sol";
+import "./AvatarNFT.sol";
+import "./DigitalArtifacts.sol";
+
+contract GamingMamanagement {
+
+address gamingManager; // EA
+mapping(address=>bool) RegisteredGamers;
+mapping(address=>bool) RegisteredArtifactCreators;//owners and creaters
+mapping(address=>bool) RegisteredAvatarCreators;//owners and creaters
+mapping (address=> address) avatarNFTContracts;//address of each avatar NFT owner is mapped to address of SC
+mapping (address=> address) artifactsNFTContracts;//address of each artifact NFT owner is mapped to address of SC
+///////////////////////////////
+///Composable NFTs Mappings////
+//////////////////////////////
+mapping(address=>mapping(address=>GameAvatarNFT[])) GamersAvatars;//mapping between every owner and SC address of the avatar and the avatar
+mapping(address=> mapping(uint256=>ArtifactNFT[])) ComposableAvatar;//mapping between original owner SC address of the avatar and mapping between Parent Avatar tokenID and its artifacts as children
+
+//Structures used in Top Down Coposable NFT
+
+//Parent
+struct GameAvatarNFT { 
+   uint256 tokenID;
+   address SCaddress;//to check ownership from the NFT SC
+   address owner;
+   address originalCreator;//unique identification with token ID
+   uint256 price;
+   uint256 numOfcomposables;
+}
+//Child
+struct ArtifactNFT { 
+   uint256 tokenID;
+   address SCaddress;
+   address owner;
+   address originalCreator;
+   uint256 price;
+  
+}
+
+//event
+event NewAvatarNFTContractAddedSuccessfully(address AvatarCreator, address AvatarNFTSC);
+event NewArtifactNFTContractAddedSuccessfully(address ArtifactCreator, address AtifactNFTSC);
+event NFTransferredToNewOwner(address from, address to, uint tokenid);
+event ComposableNFTCreatedSuccessfully(uint AvatarparentID, uint DigitalArtifactsNumOfChildren);
+event AvatarNFTSuccessfullyAddedToOwner(address owner,uint AvatarNFTokenID);
+event DigitalArtifactSuccessfullyAddedToComposableAvatarNFT( uint parentAvatartokenID, uint childArtifactTokenID);
+     constructor() {
+       gamingManager= msg.sender;
+      
+    }
+   
+    modifier onlyGamingManager{
+      require(msg.sender == gamingManager);
+      _;
+    }
+    
+    modifier onlyRegisteredGamers{
+      require(RegisteredGamers[msg.sender]); 
+      _;
+    }
+
+    modifier onlyRegisteredArtifactCreators{
+      require(RegisteredArtifactCreators[msg.sender]); 
+      _;
+    }
+    
+      modifier onlyRegisteredAvatarCreators{
+      require(RegisteredAvatarCreators[msg.sender]); 
+      _;
+      }
+
+      modifier onlyRegisteredCreators{
+          require(RegisteredAvatarCreators[msg.sender] || RegisteredArtifactCreators[msg.sender]);
+          _;
+      
+    }
+    
+///////////////////////
+///Registration////
+//////////////////////
+   
+     //AvatarCreators/owners
+      function RegisterAvatarCreator(address a) onlyGamingManager public{
+        RegisteredAvatarCreators[a]=true;
+    }
+   
+    function RevokeAvatarCreator(address a) onlyGamingManager public{
+        RegisteredAvatarCreators[a]=false;
+    }
+   
+    function isRegisteredAvatarCreator(address a) public {
+        require(RegisteredAvatarCreators[a]);    
+       
+    }
+//ArtifactCreators/owners
+    function RegisterArtifactCreator(address a) onlyGamingManager public{
+        RegisteredArtifactCreators[a]=true;
+    }
+
+    function isRegisteredArtifactCreator(address a) public{
+        require(RegisteredArtifactCreators[a]);  
+    }
+ function RevokeArtifactCreator(address a) onlyGamingManager public{
+        RegisteredArtifactCreators[a]=false;
+    }
+
+function addAvatarNFTSCs(address avatarCreator, address avatarNFTSC) public onlyGamingManager{
+    isRegisteredAvatarCreator(avatarCreator);//Avatar Creator must be registered
+    avatarNFTContracts[avatarCreator] = avatarNFTSC;
+    emit NewAvatarNFTContractAddedSuccessfully(avatarCreator, avatarNFTSC);
+}
+
+function addArtifactNFTSCs(address artifactCreator, address artifactNFTSC) public onlyGamingManager{
+    isRegisteredArtifactCreator(artifactCreator);//artifact Creator must be registered
+    artifactsNFTContracts[artifactCreator] = artifactNFTSC;
+    emit NewArtifactNFTContractAddedSuccessfully(artifactCreator, artifactNFTSC);
+
+}
+
+function BuyAvatarNFT(address AvatarCreator, uint256 tokenId, uint256 price) onlyRegisteredCreators payable public
+{
+    
+    assert(msg.value == (price * 1 ether));
+    address AvatarNFTSC = avatarNFTContracts[AvatarCreator];
+    //nf.setApprovalForAll(sellerContract, true);
+    payable(AvatarCreator).transfer(msg.value);
+    AvatarNFT(AvatarNFTSC).TransferNFTOwnership(tokenId, msg.sender);
+     //NFT(sellerContract).transferFrom(seller, msg.sender, tokenId);
+    emit NFTransferredToNewOwner(AvatarCreator, msg.sender, tokenId);
+}
+
+   
+ 
+function BuyArtifactNFT(address ArtifactCreator, uint256 tokenId, uint256 price)  onlyRegisteredCreators payable public
+{
+    assert(msg.value == (price * 1 ether));
+    address DigiArtiNFTSC = artifactsNFTContracts[ArtifactCreator];
+    //nf.setApprovalForAll(sellerContract, true);
+    payable(ArtifactCreator).transfer(msg.value);
+    DigitalArtifacts(DigiArtiNFTSC).TransferNFTOwnership(tokenId, msg.sender);
+     //NFT(sellerContract).transferFrom(seller, msg.sender, tokenId);
+    emit NFTransferredToNewOwner(ArtifactCreator, msg.sender, tokenId);
+}
+  //Composable Functions
+
+
+//[[1,"0x794387c524f755eabABB7a7FedCF296BB70dFf1C","0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2","0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db",5],[2,"0x794387c524f755eabABB7a7FedCF296BB70dFf1C","0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2","0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db",5]]
+//uint AvatarTokenID, address ANFTcreator,
+  //  uint price,uint numOfcomposables, uint DigArtiTokenID
+  function createComposableNFT( GameAvatarNFT memory avNFT, ArtifactNFT[] memory daNFT) public{
+        isRegisteredAvatarCreator(msg.sender);
+       
+        address AvatarNFTSC = avatarNFTContracts[msg.sender];
+        require(msg.sender == (AvatarNFT(AvatarNFTSC).ownerOf(avNFT.tokenID)));
+         for(uint i =0; i < daNFT.length; i++)
+         {
+              isRegisteredArtifactCreator(daNFT[i].originalCreator);
+        address DegiArtSC = artifactsNFTContracts[daNFT[i].originalCreator];
+        require(msg.sender == (DigitalArtifacts(DegiArtSC).ownerOf(daNFT[i].tokenID)));
+         }
+       // GameAvatarNFT memory avNFT  = GameAvatarNFT(AvatarTokenID,AvatarNFTSC,msg.sender,ANFTcreator,price,numOfcomposables );
+        GamersAvatars[msg.sender][avNFT.originalCreator].push(avNFT); //initializing the mapping 
+        //ArtifactNFT memory daNFT = ArtifactNFT();
+        for(uint i =0; i < daNFT.length; i++)
+        ComposableAvatar[avNFT.originalCreator][avNFT.tokenID].push(daNFT[i]);
+
+        emit ComposableNFTCreatedSuccessfully(avNFT.tokenID,  daNFT.length);
+  }
+ 
+function addAvatarNFT(GameAvatarNFT memory avNFT) public
+{ isRegisteredAvatarCreator(msg.sender);
+address AvatarNFTSC = avatarNFTContracts[msg.sender];
+require(msg.sender == (AvatarNFT(AvatarNFTSC).ownerOf(avNFT.tokenID)));
+ GamersAvatars[msg.sender][avNFT.originalCreator].push(avNFT); 
+ emit AvatarNFTSuccessfullyAddedToOwner(msg.sender,avNFT.tokenID );
+
+
+}
+//the below function is for an existing composable AvatarNFT.. an additional digital artifact has to be added to it
+function addDigitalArtifactToComposableNFT(GameAvatarNFT memory avNFT,  ArtifactNFT memory daNFT) public{
+    isRegisteredAvatarCreator(msg.sender);
+address AvatarNFTSC = avatarNFTContracts[msg.sender];
+require(msg.sender == (AvatarNFT(AvatarNFTSC).ownerOf(avNFT.tokenID)));
+address DegiArtSC = artifactsNFTContracts[daNFT.originalCreator];
+require(msg.sender == (DigitalArtifacts(DegiArtSC).ownerOf(daNFT.tokenID)), "Caller is not the owner of Digital Artifact");
+uint size = ComposableAvatar[avNFT.originalCreator][avNFT.tokenID].length;
+ for(uint i =0; i < size; i++)//to ensure it has not been a member in the composable NFT before
+        require(ComposableAvatar[avNFT.originalCreator][avNFT.tokenID][i].tokenID != daNFT.tokenID, "Element already exists" );
+ComposableAvatar[avNFT.originalCreator][avNFT.tokenID].push(daNFT);//if its not there, push it
+ComposableAvatar[avNFT.originalCreator][avNFT.numOfcomposables++];
+emit DigitalArtifactSuccessfullyAddedToComposableAvatarNFT( avNFT.tokenID,  daNFT.tokenID);
+}
+
+
+
+}
